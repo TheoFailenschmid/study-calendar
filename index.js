@@ -60,12 +60,39 @@ const TYPE_COLORS = {
 function detectLvType(name) {
   if (!name) return "other";
   const n = name.toLowerCase();
-  if (/\bvl\b|vorlesung/.test(n)) return "vl";
-  if (/\bhü\b|hörsaalübung|hoersaaluebung/.test(n)) return "hü";
-  if (/\bgü\b|\[gü\]|gruppenübung|gruppenuebung/.test(n)) return "gü";
-  if (/\bpr\b|\[pr\]|praktikum|labor/.test(n)) return "pr";
-  if (/\bse\b|seminar/.test(n)) return "se";
-  if (/\btu\b|tutorium/.test(n)) return "tu";
+  if (
+    /(?:^|[^a-zäöüß])(vl)(?:[^a-zäöüß]|$)/i.test(n) ||
+    n.includes("vorlesung")
+  )
+    return "vl";
+  if (
+    /(?:^|[^a-zäöüß])(hü|hu)(?:[^a-zäöüß]|$)/i.test(n) ||
+    n.includes("hörsaalübung") ||
+    n.includes("hoersaaluebung")
+  )
+    return "hü";
+  if (
+    /(?:^|[^a-zäöüß])(gü|gu)(?:[^a-zäöüß]|$)/i.test(n) ||
+    n.includes("gruppenübung") ||
+    n.includes("gruppenuebung")
+  )
+    return "gü";
+  if (
+    /(?:^|[^a-zäöüß])(pr)(?:[^a-zäöüß]|$)/i.test(n) ||
+    n.includes("praktikum") ||
+    n.includes("labor")
+  )
+    return "pr";
+  if (
+    /(?:^|[^a-zäöüß])(se)(?:[^a-zäöüß]|$)/i.test(n) ||
+    n.includes("seminar")
+  )
+    return "se";
+  if (
+    /(?:^|[^a-zäöüß])(tu)(?:[^a-zäöüß]|$)/i.test(n) ||
+    n.includes("tutorium")
+  )
+    return "tu";
   return "other";
 }
 
@@ -96,27 +123,44 @@ function nextColor() {
   return COLORS[colorIdx++ % COLORS.length];
 }
 
-// Returns true if pg overlaps with ANY static LV across all modules
+function isMandatoryPlenary(lvName, groupName) {
+  const check = (str) => {
+    if (!str) return false;
+    const s = str.toLowerCase();
+    return (
+      /(?:^|[^a-zäöüß])(vl|hü|hu)(?:[^a-zäöüß]|$)/i.test(s) ||
+      s.includes("vorlesung") ||
+      s.includes("plenum") ||
+      s.includes("hörsaalübung") ||
+      s.includes("hoersaaluebung")
+    );
+  };
+  return check(lvName) || check(groupName);
+}
+
+// Returns true if pg overlaps with ANY static LV or mandatory plenary LV across all modules
 function isBlockedByStatic(pg) {
   const pgStart = timeToMins(pg.startTime);
   const pgEnd = timeToMins(pg.endTime);
   for (const mod of modules) {
     for (const lv of mod.lvs) {
-      if (lv.type !== "static") continue;
-      if (lv.day !== pg.day) continue;
-      const s = timeToMins(lv.startTime),
-        e = timeToMins(lv.endTime);
-      if (pgStart < e && pgEnd > s) return true;
+      if (lv.type === "static") {
+        if (lv.day !== pg.day) continue;
+        const s = timeToMins(lv.startTime),
+          e = timeToMins(lv.endTime);
+        if (pgStart < e && pgEnd > s) return true;
+      } else if (lv.type === "parallel" && isMandatoryPlenary(lv.name)) {
+        for (const g of lv.groups) {
+          if (g.id === pg.id) continue;
+          if (g.day !== pg.day) continue;
+          const s = timeToMins(g.startTime),
+            e = timeToMins(g.endTime);
+          if (pgStart < e && pgEnd > s) return true;
+        }
+      }
     }
   }
   return false;
-}
-
-function nextId() {
-  return "_" + Math.random().toString(36).slice(2, 9);
-}
-function nextColor() {
-  return COLORS[colorIdx++ % COLORS.length];
 }
 
 // ═══════════════════════════════
@@ -130,6 +174,26 @@ function save() {
     );
   } catch (e) {}
 }
+function ensureMandatorySelected() {
+  let changed = false;
+  modules.forEach((mod) => {
+    mod.lvs.forEach((lv) => {
+      if (lv.type === "parallel") {
+        const isPlenary = isMandatoryPlenary(lv.name) || lv.groups.length === 1;
+        if (isPlenary) {
+          lv.groups.forEach((g) => {
+            if (!g.selected) {
+              g.selected = true;
+              changed = true;
+            }
+          });
+        }
+      }
+    });
+  });
+  return changed;
+}
+
 function load() {
   try {
     const raw = localStorage.getItem("stundenplaner_v2");
@@ -141,6 +205,9 @@ function load() {
       if (d.colorMode) colorMode = d.colorMode;
     }
   } catch (e) {}
+  if (ensureMandatorySelected()) {
+    save();
+  }
 }
 
 // ═══════════════════════════════
@@ -199,37 +266,95 @@ function renderSidebar() {
           </div>`;
       } else {
         // parallel
-        let pgHtml = lv.groups
-          .map((pg) => {
-            const conflict = checkConflict(pg, mod.id, lv.id, pg.id);
-            const blocked = isBlockedByStatic(pg);
-            return `
-            <div class="pg-item ${pg.selected ? "selected" : ""} ${conflict.has ? "conflict-bg" : ""} ${blocked ? "blocked-static" : ""}"
-                 onclick="togglePg('${mod.id}','${lv.id}','${pg.id}')">
+        const isPlenary = isMandatoryPlenary(lv.name);
+        const detectedType = detectLvType(lv.name);
+        let typeBadge = "";
+        if (isPlenary) {
+          const badgeCls =
+            detectedType === "hü"
+              ? "lv-badge-plenary hue"
+              : "lv-badge-plenary";
+          const badgeTxt =
+            detectedType === "hü" ? "HÜ · Immer aktiv" : "VL · Immer aktiv";
+          typeBadge = `<span class="${badgeCls}">${badgeTxt}</span>`;
+        }
+
+        const groupsByName = new Map();
+        lv.groups.forEach((pg) => {
+          if (!groupsByName.has(pg.name)) {
+            groupsByName.set(pg.name, []);
+          }
+          groupsByName.get(pg.name).push(pg);
+        });
+
+        const uniqueGroupCount = groupsByName.size;
+        const selectedGroupCount = Array.from(groupsByName.values()).filter(
+          (items) => items.some((g) => g.selected),
+        ).length;
+
+        let metaHtml = "";
+        if (isPlenary) {
+          metaHtml = `<span style="font-size:11px;color:var(--text3)">${uniqueGroupCount} ${uniqueGroupCount === 1 ? "Termin" : "Termine"}</span>`;
+        } else {
+          metaHtml = `
+            <span class="lv-badge-count">${selectedGroupCount}/${uniqueGroupCount} gewählt</span>
+            ${selectedGroupCount > 0 ? `<button class="btn" style="padding:1px 5px;font-size:10px;line-height:1" onclick="event.stopPropagation();deselectAllLvGroups('${mod.id}','${lv.id}')" title="Auswahl aufheben">Abwählen</button>` : ""}
+          `;
+        }
+
+        let pgHtml = "";
+        groupsByName.forEach((items, gName) => {
+          const isSelected = items.some((g) => g.selected);
+          const isBlocked = items.some((g) => isBlockedByStatic(g));
+          const conflict = items.reduce(
+            (acc, g) => {
+              if (acc.has) return acc;
+              return checkConflict(g, mod.id, lv.id, g.id);
+            },
+            { has: false },
+          );
+
+          const timesHtml = items
+            .map(
+              (it) => `
+            <div class="pg-time">
+              <span class="pg-day-badge">${it.day}</span>
+              <span>${it.startTime}–${it.endTime}</span>
+              ${it.room ? `<span style="color:var(--text3)">· ${it.room}</span>` : ""}
+            </div>`,
+            )
+            .join("");
+
+          pgHtml += `
+            <div class="pg-item ${isSelected ? "selected" : ""} ${conflict.has ? "conflict-bg" : ""} ${isBlocked ? "blocked-static" : ""}"
+                 onclick="togglePg('${mod.id}','${lv.id}','${items[0].id}')">
               <div class="pg-check">
                 <svg width="9" height="7" viewBox="0 0 9 7" fill="none">
                   <path d="M1 3.5L3.5 6L8 1" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </div>
               <div class="pg-info">
-                <div class="pg-name">${pg.name}</div>
-                <div class="pg-time">
-                  <span class="pg-day-badge">${pg.day}</span>
-                  <span>${pg.startTime}–${pg.endTime}</span>
-                  ${pg.room ? `<span style="color:var(--text3)">· ${pg.room}</span>` : ""}
+                <div class="pg-name" style="display:flex;align-items:center;gap:4px">
+                  ${detectedType === "vl" ? '<span class="badge-vl">VL</span>' : detectedType === "hü" ? '<span class="badge-hu">HÜ</span>' : ""}
+                  <span>${gName}</span>
                 </div>
-                ${blocked ? `<div class="pg-blocked-label">⛔ Feste LV überschneidet sich</div>` : conflict.has ? `<div class="pg-conflict">⚠ Konflikt mit ${conflict.with}</div>` : ""}
+                ${timesHtml}
+                ${isBlocked ? `<div class="pg-blocked-label">⛔ Feste LV überschneidet sich</div>` : conflict.has ? `<div class="pg-conflict">⚠ Konflikt mit ${conflict.with}</div>` : ""}
               </div>
             </div>`;
-          })
-          .join("");
+        });
 
         lvHtml += `
           <div class="lv-item" style="padding:0">
-            <div style="padding:6px 10px;display:flex;align-items:center;justify-content:space-between">
-              <div>
-                <div class="lv-label">${lv.name}</div>
-                <div class="lv-type" style="font-size:11px;color:var(--text3)">${lv.groups.length} Parallelgruppen</div>
+            <div style="padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:6px">
+              <div style="min-width:0;flex:1">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  <div class="lv-label" style="margin-bottom:0">${lv.name}</div>
+                  ${typeBadge}
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
+                  ${metaHtml}
+                </div>
               </div>
               <button class="btn danger" style="padding:2px 6px;font-size:10px" onclick="removeLv('${mod.id}','${lv.id}')">✕</button>
             </div>
@@ -331,6 +456,31 @@ function renderCalendar() {
   const grid = document.getElementById("weekGrid");
   grid.innerHTML = "";
   const totalPx = TOTAL_HOURS * 64; // slot height
+
+  if (modules.length === 0) {
+    const guide = document.createElement("div");
+    guide.className = "empty-cal-guide";
+    guide.innerHTML = `
+      <div style="font-size:36px;margin-bottom:10px">🗓️</div>
+      <h3>Dein Stundenplan ist noch leer</h3>
+      <p>Importiere deine Lehrveranstaltungen aus HISinOne oder starte direkt mit einem realistischen Beispielplan:</p>
+      <div class="empty-cal-guide-actions">
+        <button class="btn primary" onclick="openTutorialModal('hisinone')" style="justify-content:center;padding:10px 16px;font-size:13px">
+          📖 Anleitung: startFlow.xhtml aus HISinOne holen
+        </button>
+        <button class="btn" onclick="pasteFromClipboard()" style="justify-content:center;padding:10px 16px;font-size:13px">
+          📋 Aus Zwischenablage einfügen (Strg+V)
+        </button>
+        <button class="btn" onclick="loadDemoData()" style="justify-content:center;padding:10px 16px;font-size:13px">
+          ✨ Demo-Stundenplan laden (3 Module)
+        </button>
+        <button class="btn" onclick="document.getElementById('fileUpload').click()" style="justify-content:center;padding:10px 16px;font-size:13px">
+          📂 Datei auswählen (.xhtml, .html, .json)
+        </button>
+      </div>
+    `;
+    grid.appendChild(guide);
+  }
 
   // Day header row
   const cornerEl = document.createElement("div");
@@ -548,9 +698,26 @@ function togglePg(modId, lvId, pgId) {
   if (!lv || lv.type !== "parallel") return;
   const pg = lv.groups.find((g) => g.id === pgId);
   if (!pg) return;
-  pg.selected = !pg.selected;
+
+  // Toggle this group and all appointment entries sharing the same name
+  const newSelected = !pg.selected;
+  lv.groups
+    .filter((g) => g.name === pg.name)
+    .forEach((g) => (g.selected = newSelected));
+
   save();
   render();
+}
+
+function deselectAllLvGroups(modId, lvId) {
+  const mod = modules.find((m) => m.id === modId);
+  if (!mod) return;
+  const lv = mod.lvs.find((l) => l.id === lvId);
+  if (!lv || lv.type !== "parallel") return;
+  lv.groups.forEach((g) => (g.selected = false));
+  save();
+  render();
+  showToast(`Auswahl für "${lv.name}" aufgehoben`, "info");
 }
 
 function removeModule(id) {
@@ -910,6 +1077,32 @@ function confirmAddLv() {
   showToast("LV hinzugefügt ✓", "success");
 }
 
+// Helper to sanitize and clean course / module names
+function cleanCourseOrModuleName(raw) {
+  if (!raw) return "";
+  let str = raw.trim().replace(/\s+/g, " ");
+  // Remove "Detailansicht - ", "Detailansicht:", "Detailansicht"
+  str = str.replace(/^Detailansicht\s*[-–:]\s*/i, "");
+  str = str.replace(/^Detailansicht\s*/i, "");
+  str = str.replace(/^Elementdaten\s*[-–:]?\s*/i, "");
+  // Remove university suffixes
+  str = str.replace(/\s*[-–|]\s*Technische Universität.*$/i, "");
+  str = str.replace(/\s*[-–|]\s*TUHH.*$/i, "");
+  str = str.replace(/\s*[-–|]\s*Universität.*$/i, "");
+  str = str.replace(/\s*[-–|]\s*Hochschule.*$/i, "");
+  str = str.replace(/[|:;,-]+$/, "").trim();
+
+  // If the remaining string is a generic system title or empty, return empty
+  if (
+    /^(detailansicht|studienplaner|stundenplan|startflow|portal|meinstudium)$/i.test(
+      str,
+    )
+  ) {
+    return "";
+  }
+  return str;
+}
+
 // ═══════════════════════════════
 //   XHTML PARSER
 // ═══════════════════════════════
@@ -918,54 +1111,171 @@ function parseXhtml(content) {
   const doc = parser.parseFromString(content, "text/html");
   const groups = [];
 
-  // Find all parallelGroupSchedule sections by their h3
+  // Try extracting course/module name from specific HISinOne elements, permalink, or headings
+  let detectedCourseName = "";
+  const dataBoxEl = doc.querySelector(
+    "#form\\:dialogHeader\\:dataBox strong, .dialogHeaderDataBox strong, .dataBox strong",
+  );
+  if (dataBoxEl) {
+    detectedCourseName = cleanCourseOrModuleName(dataBoxEl.textContent);
+  }
+
+  if (!detectedCourseName) {
+    const permalinkEl = doc.querySelector("[data-page-permalink-title]");
+    if (permalinkEl) {
+      detectedCourseName = cleanCourseOrModuleName(
+        permalinkEl.getAttribute("data-page-permalink-title"),
+      );
+    }
+  }
+
+  if (!detectedCourseName) {
+    const permalinkBtn = doc.querySelector(
+      "button[title*='Permalink: Elementdaten'], [aria-label*='Permalink: Elementdaten']",
+    );
+    if (permalinkBtn) {
+      const titleAttr =
+        permalinkBtn.getAttribute("title") ||
+        permalinkBtn.getAttribute("aria-label") ||
+        "";
+      detectedCourseName = cleanCourseOrModuleName(
+        titleAttr.replace(/^Permalink:\s*Elementdaten\s*/i, ""),
+      );
+    }
+  }
+
+  if (!detectedCourseName) {
+    const titleEl = doc.querySelector("h1, h2, title, .tbHead");
+    if (titleEl) {
+      detectedCourseName = cleanCourseOrModuleName(titleEl.textContent);
+    }
+  }
+
+  // Helper to detect cancelled dates (Ausfalltermine)
+  function isCancelledRow(row) {
+    if (
+      row.matches(
+        '.ausfall, .cancelled, [class*="ausfall"], [class*="cancel"]',
+      )
+    ) {
+      return true;
+    }
+    if (row.querySelector('del, strike, s, [style*="line-through"]')) {
+      return true;
+    }
+    const style = row.getAttribute("style") || "";
+    if (style.includes("line-through")) return true;
+
+    // Check status columns (.column0, .column1) for cancellation keywords.
+    // Note: Do NOT check .column4 because it is the "Ausfalltermin" column header
+    // that lists holiday dates for the normal weekly series.
+    const col0 = row.querySelector(".column0");
+    const col1 = row.querySelector(".column1");
+    const statusText = (
+      (col0 ? col0.textContent : "") +
+      " " +
+      (col1 ? col1.textContent : "")
+    ).toLowerCase();
+    if (
+      /abgesagt|storniert|fällt\s+aus|faellt\s+aus|entfällt|entfaellt|findet\s+nicht\s+statt/i.test(
+        statusText,
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  // Track appointments per group to deduplicate identical weekly time slots
+  // (e.g. split semester date intervals or repeated table rows for the same weekly slot)
+  const seenGroupAppointments = new Set();
+
+  // 1. Find all parallelGroupSchedule sections by their h3 or id
   const sections = doc.querySelectorAll('[id*="parallelGroupSchedule_"]');
   const seenIds = new Set();
 
   sections.forEach((section) => {
     const idAttr = section.id;
     if (!idAttr || seenIds.has(idAttr)) return;
-    // Only top-level section divs
     if (!idAttr.match(/parallelGroupSchedule_\d+$/)) return;
     seenIds.add(idAttr);
 
-    // Get group name from h3
-    const h3 = section.querySelector("h3");
+    const h3 = section.querySelector("h3, h4, .legend");
     if (!h3) return;
-    const groupName = h3.textContent.trim();
+    const groupName = h3.textContent.trim().replace(/\s+/g, " ");
 
-    // Find appointment table rows
-    const tables = section.querySelectorAll(
-      "table.tableWithBorder, table.table",
+    // Target the specific appointment table, avoiding layout/presentation wrapper tables
+    let tables = section.querySelectorAll(
+      "table[id*='appointmentSeriesTable'], table.tableWithBorder, table.table",
     );
+    if (tables.length === 0) {
+      tables = section.querySelectorAll(
+        "table:not([role='presentation']):not(.tableOverflowFix)",
+      );
+    }
+
     tables.forEach((table) => {
-      const tbody = table.querySelector("tbody");
-      if (!tbody) return;
-      const rows = tbody.querySelectorAll("tr");
+      // Skip layout tables
+      if (
+        table.getAttribute("role") === "presentation" ||
+        table.classList.contains("tableOverflowFix")
+      ) {
+        return;
+      }
+      const tbody = table.querySelector("tbody") || table;
+      // Only select direct child rows of this tbody, avoiding recursing into nested tables
+      let rows = tbody.querySelectorAll(":scope > tr");
+      if (rows.length === 0) {
+        rows = tbody.querySelectorAll("tr");
+      }
       rows.forEach((row) => {
         const cells = row.querySelectorAll("td");
-        if (cells.length < 4) return;
-        // col2 = weekday, col3 = time
+        if (cells.length < 3) return;
+        if (isCancelledRow(row)) return;
+
         let dayCell = "",
-          timeCell = "";
+          timeCell = "",
+          roomCell = "";
         cells.forEach((td) => {
           if (td.classList.contains("column2")) dayCell = td.textContent.trim();
           if (td.classList.contains("column3"))
             timeCell = td.textContent.trim();
+          if (td.classList.contains("column9")) {
+            const link = td.querySelector("a.link_text, a");
+            roomCell = link ? link.textContent.trim() : td.textContent.trim();
+          }
         });
+
+        // Fallback for cell detection if column classes are not present
+        if (!dayCell || !timeCell) {
+          cells.forEach((td) => {
+            const txt = td.textContent.trim();
+            if (!dayCell && parseDay(txt)) dayCell = txt;
+            if (!timeCell && parseTime(txt)) timeCell = txt;
+          });
+        }
+
         if (!dayCell || !timeCell) return;
         const day = parseDay(dayCell);
         const times = parseTime(timeCell);
         if (!day || !times) return;
 
-        // Get room if available
-        let room = "";
-        cells.forEach((td) => {
-          if (td.classList.contains("column9")) {
-            const link = td.querySelector("a.link_text");
-            if (link) room = link.textContent.trim();
+        // Deduplicate identical weekly slots for this group
+        const groupKey = `${groupName.toLowerCase()}|${day}|${times.start}|${times.end}`;
+        if (seenGroupAppointments.has(groupKey)) {
+          if (roomCell) {
+            const existing = groups.find(
+              (g) =>
+                g.name.toLowerCase() === groupName.toLowerCase() &&
+                g.day === day &&
+                g.startTime === times.start &&
+                g.endTime === times.end,
+            );
+            if (existing && !existing.room) existing.room = roomCell;
           }
-        });
+          return;
+        }
+        seenGroupAppointments.add(groupKey);
 
         groups.push({
           id: nextId(),
@@ -973,18 +1283,102 @@ function parseXhtml(content) {
           day,
           startTime: times.start,
           endTime: times.end,
-          room,
+          room: roomCell || "",
           selected: false,
         });
       });
     });
   });
 
+  // 2. Fallback: If no parallelGroupSchedule sections found, check general appointment tables
+  if (groups.length === 0) {
+    const tables = doc.querySelectorAll(
+      "table.tableWithBorder, table.table, table.list, table",
+    );
+    tables.forEach((table) => {
+      if (
+        table.getAttribute("role") === "presentation" ||
+        table.classList.contains("tableOverflowFix")
+      ) {
+        return;
+      }
+      const tbody = table.querySelector("tbody") || table;
+      let rows = tbody.querySelectorAll(":scope > tr");
+      if (rows.length === 0) {
+        rows = tbody.querySelectorAll("tr");
+      }
+      rows.forEach((row) => {
+        const cells = row.querySelectorAll("td");
+        if (cells.length < 3) return;
+        if (isCancelledRow(row)) return;
+
+        let dayCell = "",
+          timeCell = "",
+          roomCell = "",
+          typeCell = "";
+        cells.forEach((td) => {
+          if (td.classList.contains("column1")) typeCell = td.textContent.trim();
+          if (td.classList.contains("column2")) dayCell = td.textContent.trim();
+          if (td.classList.contains("column3"))
+            timeCell = td.textContent.trim();
+          if (td.classList.contains("column9")) {
+            const link = td.querySelector("a.link_text, a");
+            roomCell = link ? link.textContent.trim() : td.textContent.trim();
+          }
+        });
+
+        if (!dayCell || !timeCell) {
+          cells.forEach((td) => {
+            const txt = td.textContent.trim();
+            if (!dayCell && parseDay(txt)) dayCell = txt;
+            if (!timeCell && parseTime(txt)) timeCell = txt;
+          });
+        }
+
+        if (!dayCell || !timeCell) return;
+        const day = parseDay(dayCell);
+        const times = parseTime(timeCell);
+        if (!day || !times) return;
+
+        const gName = typeCell || detectedCourseName || "Termin";
+
+        // Deduplicate identical weekly slots
+        const groupKey = `${gName.toLowerCase()}|${day}|${times.start}|${times.end}`;
+        if (seenGroupAppointments.has(groupKey)) {
+          if (roomCell) {
+            const existing = groups.find(
+              (g) =>
+                g.name.toLowerCase() === gName.toLowerCase() &&
+                g.day === day &&
+                g.startTime === times.start &&
+                g.endTime === times.end,
+            );
+            if (existing && !existing.room) existing.room = roomCell;
+          }
+          return;
+        }
+        seenGroupAppointments.add(groupKey);
+
+        groups.push({
+          id: nextId(),
+          name: gName,
+          day,
+          startTime: times.start,
+          endTime: times.end,
+          room: roomCell || "",
+          selected: false,
+        });
+      });
+    });
+  }
+
+  groups.detectedCourseName = detectedCourseName;
   return groups;
 }
 
 function parseDay(raw) {
-  const cleaned = raw.trim().toLowerCase();
+  if (!raw) return null;
+  const cleaned = raw.trim().toLowerCase().replace(/[.,;:]/g, "");
   return DAY_MAP[cleaned] || null;
 }
 
@@ -998,7 +1392,7 @@ function parseTime(raw) {
 }
 
 // ═══════════════════════════════
-//   FILE UPLOAD / DROP (XHTML + JSON)
+//   FILE UPLOAD / DROP (XHTML + HTML + JSON)
 // ═══════════════════════════════
 function handleFileUpload(event) {
   const file = event.target.files[0];
@@ -1011,7 +1405,6 @@ function onDragOver(e) {
   e.preventDefault();
   const dz = document.getElementById("dropzone");
   dz.classList.add("drag-over");
-  // Try to detect file type from drag data
   const items = e.dataTransfer?.items;
   if (items && items.length > 0) {
     const name = items[0].type || "";
@@ -1032,6 +1425,35 @@ function onDrop(e) {
   if (file) readFile(file);
 }
 
+// Global window Drag & Drop overlay
+let globalDragCounter = 0;
+window.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  globalDragCounter++;
+  const overlay = document.getElementById("globalDropOverlay");
+  if (overlay) overlay.classList.add("active");
+});
+window.addEventListener("dragleave", (e) => {
+  e.preventDefault();
+  globalDragCounter--;
+  if (globalDragCounter <= 0) {
+    globalDragCounter = 0;
+    const overlay = document.getElementById("globalDropOverlay");
+    if (overlay) overlay.classList.remove("active");
+  }
+});
+window.addEventListener("dragover", (e) => {
+  e.preventDefault();
+});
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  globalDragCounter = 0;
+  const overlay = document.getElementById("globalDropOverlay");
+  if (overlay) overlay.classList.remove("active");
+  const file = e.dataTransfer?.files?.[0];
+  if (file) readFile(file);
+});
+
 function readFile(file) {
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -1048,7 +1470,7 @@ function readFile(file) {
         showToast("Fehler beim JSON-Import: " + err.message, "error");
       }
     } else {
-      // XHTML import — parse parallel groups
+      // XHTML / HTML import — parse parallel groups
       openImportModal(content, file.name);
     }
   };
@@ -1057,8 +1479,11 @@ function readFile(file) {
 
 function openImportModal(content, filename) {
   const groups = parseXhtml(content);
-  if (groups.length === 0) {
-    showToast("Keine Parallelgruppen gefunden in der Datei", "error");
+  if (!groups || groups.length === 0) {
+    showToast(
+      "Keine Termine gefunden. Öffne die Anleitung für Hilfe zum HISinOne-Export.",
+      "error",
+    );
     return;
   }
   pendingImport = { groups };
@@ -1078,14 +1503,12 @@ function openImportModal(content, filename) {
       ? ""
       : "none";
   };
-  // Set initial visibility based on current selection
   document.getElementById("importNewModuleGroup").style.display =
     sel.value === "__new__" ? "" : "none";
 
   // Preview
   const preview = document.getElementById("importPreview");
   preview.innerHTML = "";
-  // Group by name for cleaner display
   const unique = {};
   groups.forEach((g) => {
     if (!unique[g.name]) unique[g.name] = [];
@@ -1116,12 +1539,65 @@ function openImportModal(content, filename) {
     preview.appendChild(more);
   }
 
-  // Try to guess LV name from first group name
+  // Guess LV name and Module name
   const firstGroupName = names[0] || "";
-  const guessedLvName =
-    firstGroupName.split(" - ")[0] || filename.replace(/\.xhtml$/, "");
+  let rawName = groups.detectedCourseName || "";
+
+  // If detectedCourseName was empty, try extracting from firstGroupName or cleaned filename
+  if (!rawName && firstGroupName) {
+    rawName = cleanCourseOrModuleName(firstGroupName);
+  }
+  if (!rawName && filename) {
+    rawName = cleanCourseOrModuleName(
+      filename.replace(/\.(xhtml|html|htm)$/i, "").replace(/[_-]/g, " "),
+    );
+  }
+
+  let guessedModuleName = rawName || "Neues Modul";
+  let guessedLvName = "";
+
+  if (rawName) {
+    // Check for brackets like "Module Name (GÜ)" or "Module Name [VL] Parallelgruppe 1"
+    const bracketMatch = rawName.match(
+      /^(.*?)\s*(\([A-Za-zÄÖÜäöüß0-9\s]+\)|\[[A-Za-zÄÖÜäöüß0-9\s]+\])\s*(.*)$/,
+    );
+    if (bracketMatch) {
+      guessedModuleName = bracketMatch[1].trim() || rawName;
+      const typePart = bracketMatch[2].replace(/[()[\]]/g, "").trim();
+      const restPart = bracketMatch[3].trim();
+      guessedLvName = restPart ? `${typePart} ${restPart}` : typePart;
+    } else if (rawName.includes(" - ")) {
+      const parts = rawName.split(" - ");
+      guessedModuleName = parts[0].trim();
+      guessedLvName = parts.slice(1).join(" - ").trim();
+    }
+  }
+
+  if (!guessedLvName) {
+    guessedLvName = firstGroupName || "Lehrveranstaltung";
+  }
+
+  guessedModuleName = cleanCourseOrModuleName(guessedModuleName) || "Neues Modul";
+
   document.getElementById("importLvName").value = guessedLvName;
-  document.getElementById("importNewModuleName").value = guessedLvName;
+  document.getElementById("importNewModuleName").value = guessedModuleName;
+
+  // Check if detected as Vorlesung or Hörsaalübung
+  const isPlenary =
+    isMandatoryPlenary(guessedLvName) ||
+    isMandatoryPlenary(firstGroupName) ||
+    groups.length === 1;
+
+  const notice = document.getElementById("importPlenaryNotice");
+  if (notice) {
+    if (isPlenary) {
+      notice.style.display = "";
+      notice.innerHTML =
+        "💡 <b>Vorlesung / Hörsaalübung erkannt:</b> Alle Termine werden automatisch für deinen Stundenplan ausgewählt!";
+    } else {
+      notice.style.display = "none";
+    }
+  }
 
   openModal("modalImport");
 }
@@ -1149,11 +1625,18 @@ function confirmImport() {
     if (!mod) return;
   }
 
+  const isPlenary =
+    isMandatoryPlenary(lvName) || pendingImport.groups.length === 1;
+
   const lv = {
     id: nextId(),
     name: lvName,
     type: "parallel",
-    groups: pendingImport.groups,
+    groups: pendingImport.groups.map((g) => ({
+      ...g,
+      selected:
+        isPlenary || isMandatoryPlenary(lvName, g.name) ? true : g.selected,
+    })),
   };
   mod.lvs.push(lv);
 
@@ -1161,7 +1644,368 @@ function confirmImport() {
   save();
   render();
   closeModal("modalImport");
-  showToast(`${lv.groups.length} Parallelgruppen importiert ✓`, "success");
+  showToast(
+    `${lv.groups.length} Termine importiert ${isPlenary ? "(automatisch ausgewählt)" : ""} ✓`,
+    "success",
+  );
+}
+
+// ═══════════════════════════════
+//   PASTE / CLIPBOARD IMPORT
+// ═══════════════════════════════
+async function pasteFromClipboard() {
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      const text = await navigator.clipboard.readText();
+      if (!text || !text.trim()) {
+        showToast("Zwischenablage ist leer", "error");
+        return;
+      }
+      processPastedContent(text.trim());
+    } else {
+      openPasteModal();
+    }
+  } catch (err) {
+    // If permission blocked or unavailable, open the paste modal
+    openPasteModal();
+  }
+}
+
+function openPasteModal() {
+  document.getElementById("pasteInput").value = "";
+  openModal("modalPaste");
+  setTimeout(() => {
+    const input = document.getElementById("pasteInput");
+    if (input) input.focus();
+  }, 100);
+}
+
+function confirmPasteImport() {
+  const text = document.getElementById("pasteInput").value.trim();
+  if (!text) {
+    showToast("Bitte Quelltext einfügen", "error");
+    return;
+  }
+  closeModal("modalPaste");
+  processPastedContent(text);
+}
+
+function processPastedContent(raw) {
+  if (raw.startsWith("{") && raw.includes('"modules"')) {
+    try {
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data.modules))
+        throw new Error('Kein "modules"-Array gefunden');
+      _applyImportedData(data);
+    } catch (e) {
+      showToast("Fehler beim JSON-Import: " + e.message, "error");
+    }
+  } else {
+    // Treat as HTML / XHTML
+    openImportModal(raw, "startFlow.xhtml");
+  }
+}
+
+// Global paste listener (Strg+V anywhere outside input elements)
+window.addEventListener("paste", (e) => {
+  if (
+    e.target.tagName === "INPUT" ||
+    e.target.tagName === "TEXTAREA" ||
+    e.target.tagName === "SELECT"
+  ) {
+    return;
+  }
+  const text = e.clipboardData?.getData("text") || "";
+  if (text.trim()) {
+    processPastedContent(text.trim());
+  }
+});
+
+// ═══════════════════════════════
+//   TUTORIAL MODAL
+// ═══════════════════════════════
+function openTutorialModal(tab = "hisinone") {
+  switchTutorialTab(tab);
+  openModal("modalTutorial");
+}
+
+function switchTutorialTab(tab) {
+  const tabs = ["hisinone", "selection", "optimizer", "share", "shortcuts"];
+  tabs.forEach((t) => {
+    const btn = document.getElementById("tutTab-" + t);
+    const panel = document.getElementById("tutPanel-" + t);
+    if (btn) btn.classList.toggle("active", t === tab);
+    if (panel) panel.style.display = t === tab ? "" : "none";
+  });
+}
+
+// ═══════════════════════════════
+//   DEMO DATA LOADER
+// ═══════════════════════════════
+function loadDemoData() {
+  if (
+    modules.length > 0 &&
+    !confirm(
+      "Möchtest du den Demo-Stundenplan laden? Vorhandene Daten werden überschrieben.",
+    )
+  ) {
+    return;
+  }
+  modules = [
+    {
+      id: "_demo_hm2",
+      name: "Höhere Mathematik II",
+      color: "#7c6af7",
+      lvs: [
+        {
+          id: "_demo_hm2_vl",
+          name: "Vorlesung",
+          type: "parallel",
+          groups: [
+            {
+              id: "_demo_hm2_vl_1",
+              name: "Vorlesung (Mo)",
+              day: "Mo",
+              startTime: "08:15",
+              endTime: "09:45",
+              room: "Audimax I",
+              selected: true,
+            },
+            {
+              id: "_demo_hm2_vl_2",
+              name: "Vorlesung (Mi)",
+              day: "Mi",
+              startTime: "08:15",
+              endTime: "09:45",
+              room: "Audimax I",
+              selected: true,
+            },
+          ],
+        },
+        {
+          id: "_demo_hm2_hue",
+          name: "Hörsaalübung",
+          type: "parallel",
+          groups: [
+            {
+              id: "_demo_hm2_hue_1",
+              name: "Hörsaalübung (Fr)",
+              day: "Fr",
+              startTime: "09:45",
+              endTime: "11:15",
+              room: "Audimax I",
+              selected: true,
+            },
+          ],
+        },
+        {
+          id: "_demo_hm2_gue",
+          name: "Gruppenübung",
+          type: "parallel",
+          groups: [
+            {
+              id: "_demo_hm2_g1",
+              name: "Gruppe 01",
+              day: "Di",
+              startTime: "11:30",
+              endTime: "13:00",
+              room: "SBS 95 - 0.05",
+              selected: true,
+            },
+            {
+              id: "_demo_hm2_g2",
+              name: "Gruppe 02",
+              day: "Di",
+              startTime: "14:00",
+              endTime: "15:30",
+              room: "DE15 - 1.02",
+              selected: false,
+            },
+            {
+              id: "_demo_hm2_g3",
+              name: "Gruppe 03",
+              day: "Mi",
+              startTime: "11:30",
+              endTime: "13:00",
+              room: "SBS 95 - 0.05",
+              selected: false,
+            },
+            {
+              id: "_demo_hm2_g4",
+              name: "Gruppe 04",
+              day: "Do",
+              startTime: "09:45",
+              endTime: "11:15",
+              room: "DE15 - 0.03",
+              selected: false,
+            },
+            {
+              id: "_demo_hm2_g5",
+              name: "Gruppe 05",
+              day: "Do",
+              startTime: "14:00",
+              endTime: "15:30",
+              room: "SBS 95 - 1.01",
+              selected: false,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "_demo_info2",
+      name: "Informatik II: Algorithmen",
+      color: "#34d399",
+      lvs: [
+        {
+          id: "_demo_info2_vl",
+          name: "Vorlesung",
+          type: "parallel",
+          groups: [
+            {
+              id: "_demo_info2_vl_1",
+              name: "Vorlesung (Di)",
+              day: "Di",
+              startTime: "09:45",
+              endTime: "11:15",
+              room: "H0.16",
+              selected: true,
+            },
+            {
+              id: "_demo_info2_vl_2",
+              name: "Vorlesung (Do)",
+              day: "Do",
+              startTime: "11:30",
+              endTime: "13:00",
+              room: "H0.16",
+              selected: true,
+            },
+          ],
+        },
+        {
+          id: "_demo_info2_hue",
+          name: "Hörsaalübung",
+          type: "parallel",
+          groups: [
+            {
+              id: "_demo_info2_hue_1",
+              name: "Hörsaalübung (Mi)",
+              day: "Mi",
+              startTime: "14:00",
+              endTime: "15:30",
+              room: "H0.16",
+              selected: true,
+            },
+          ],
+        },
+        {
+          id: "_demo_info2_pr",
+          name: "Rechnerpraktikum",
+          type: "parallel",
+          groups: [
+            {
+              id: "_demo_info2_pr_a",
+              name: "Praktikum Gr. A",
+              day: "Mo",
+              startTime: "13:15",
+              endTime: "14:45",
+              room: "Pool 3",
+              selected: true,
+            },
+            {
+              id: "_demo_info2_pr_b",
+              name: "Praktikum Gr. B",
+              day: "Mo",
+              startTime: "15:00",
+              endTime: "16:30",
+              room: "Pool 3",
+              selected: false,
+            },
+            {
+              id: "_demo_info2_pr_c",
+              name: "Praktikum Gr. C",
+              day: "Fr",
+              startTime: "11:30",
+              endTime: "13:00",
+              room: "Pool 1",
+              selected: false,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "_demo_phy",
+      name: "Physik für Ingenieure",
+      color: "#fbbf24",
+      lvs: [
+        {
+          id: "_demo_phy_vl",
+          name: "Vorlesung",
+          type: "parallel",
+          groups: [
+            {
+              id: "_demo_phy_vl_1",
+              name: "Vorlesung (Mo)",
+              day: "Mo",
+              startTime: "10:00",
+              endTime: "11:30",
+              room: "Physik HS",
+              selected: true,
+            },
+            {
+              id: "_demo_phy_vl_2",
+              name: "Vorlesung (Do)",
+              day: "Do",
+              startTime: "08:15",
+              endTime: "09:45",
+              room: "Physik HS",
+              selected: true,
+            },
+          ],
+        },
+        {
+          id: "_demo_phy_ue",
+          name: "Übung",
+          type: "parallel",
+          groups: [
+            {
+              id: "_demo_phy_ue_1",
+              name: "Übung Gr. 1",
+              day: "Di",
+              startTime: "13:15",
+              endTime: "14:45",
+              room: "Geb. E - 0.08",
+              selected: false,
+            },
+            {
+              id: "_demo_phy_ue_2",
+              name: "Übung Gr. 2",
+              day: "Mi",
+              startTime: "10:00",
+              endTime: "11:30",
+              room: "Geb. E - 0.08",
+              selected: true,
+            },
+            {
+              id: "_demo_phy_ue_3",
+              name: "Übung Gr. 3",
+              day: "Fr",
+              startTime: "13:15",
+              endTime: "14:45",
+              room: "Geb. E - 0.08",
+              selected: false,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  colorIdx = 3;
+  save();
+  render();
+  closeAllModals();
+  showToast("Demo-Stundenplan geladen ✓", "success");
 }
 
 // ═══════════════════════════════
@@ -1200,6 +2044,12 @@ document.addEventListener("keydown", (e) => {
     e.target.tagName === "SELECT"
   )
     return;
+
+  // ? or H opens tutorial
+  if (e.key === "?" || e.key === "h" || e.key === "H") {
+    e.preventDefault();
+    openTutorialModal();
+  }
   // Ctrl+O opens optimizer
   if ((e.ctrlKey || e.metaKey) && e.key === "o") {
     e.preventDefault();
@@ -1269,18 +2119,14 @@ function saveOptimizerPriorities() {
   );
 }
 
-// Check if a group name indicates HÜ/GÜ (optional attendance)
+// Check if a group name indicates GÜ (optional attendance)
 function isOptionalLv(name) {
   if (!name) return false;
   const n = name.toLowerCase();
   return (
-    n.includes("hü") ||
     n.includes("gü") ||
-    n.includes("hörsaalübung") ||
     n.includes("gruppenübung") ||
-    n.includes("hoersaaluebung") ||
     n.includes("gruppenuebung") ||
-    /\bhu\b/.test(n) ||
     /\bgu\b/.test(n)
   );
 }
@@ -1290,7 +2136,12 @@ function getParallelChoices() {
   const choices = [];
   for (const mod of modules) {
     for (const lv of mod.lvs) {
-      if (lv.type !== "parallel" || lv.groups.length === 0) continue;
+      if (
+        lv.type !== "parallel" ||
+        lv.groups.length === 0 ||
+        isMandatoryPlenary(lv.name)
+      )
+        continue;
       // Filter out groups blocked by static LVs
       const validGroups = lv.groups.filter((g) => !isBlockedByStatic(g));
       if (validGroups.length === 0) continue;
@@ -1342,19 +2193,30 @@ function generateCombinations(choices) {
   return results;
 }
 
-// Collect all fixed events (static LVs) that always appear
+// Collect all fixed events (static LVs + mandatory plenary VL/HÜ) that always appear
 function getStaticEvents() {
   const events = [];
   for (const mod of modules) {
     for (const lv of mod.lvs) {
-      if (lv.type !== "static") continue;
-      events.push({
-        day: lv.day,
-        startTime: lv.startTime,
-        endTime: lv.endTime,
-        name: lv.name,
-        modName: mod.name,
-      });
+      if (lv.type === "static") {
+        events.push({
+          day: lv.day,
+          startTime: lv.startTime,
+          endTime: lv.endTime,
+          name: lv.name,
+          modName: mod.name,
+        });
+      } else if (lv.type === "parallel" && isMandatoryPlenary(lv.name)) {
+        for (const g of lv.groups) {
+          events.push({
+            day: g.day,
+            startTime: g.startTime,
+            endTime: g.endTime,
+            name: g.name,
+            modName: mod.name,
+          });
+        }
+      }
     }
   }
   return events;
@@ -1497,20 +2359,27 @@ function optimizePlan() {
 }
 
 function applyOptimalPlan(combo) {
-  // Clear all parallel selections first
+  // Clear all parallel selections first, but preserve mandatory plenary (VL/HÜ)
   for (const mod of modules) {
     for (const lv of mod.lvs) {
       if (lv.type !== "parallel") continue;
+      if (isMandatoryPlenary(lv.name)) {
+        for (const g of lv.groups) g.selected = true;
+        continue;
+      }
       for (const g of lv.groups) g.selected = false;
     }
   }
-  // Apply the winning combo
+  // Apply the winning combo (including all appointments sharing the group name)
   for (const g of combo) {
     for (const mod of modules) {
       for (const lv of mod.lvs) {
         if (lv.type !== "parallel") continue;
-        const match = lv.groups.find((pg) => pg.id === g.id);
-        if (match) match.selected = true;
+        lv.groups
+          .filter((pg) => pg.id === g.id || pg.name === g.name)
+          .forEach((pg) => {
+            pg.selected = true;
+          });
       }
     }
   }

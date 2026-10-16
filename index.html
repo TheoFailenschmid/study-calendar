@@ -27,6 +27,22 @@
       <div class="header-actions">
         <button
           class="btn"
+          onclick="openTutorialModal()"
+          title="Anleitung anzeigen (Taste: ?)"
+        >
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.4" />
+            <path
+              d="M5.5 5.2a1.8 1.8 0 0 1 3.2 1c0 .9-.9 1.4-1.4 1.8-.3.3-.3.6-.3 1M7 11h.01"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+            />
+          </svg>
+          Anleitung
+        </button>
+        <button
+          class="btn"
           onclick="openShareModal('export')"
           title="Stundenplan exportieren"
         >
@@ -167,7 +183,7 @@
             </div>
           </div>
         </div>
-        <!-- DROP ZONE for XHTML + JSON inside sidebar bottom -->
+        <!-- DROP ZONE for XHTML + HTML + JSON inside sidebar bottom -->
         <div class="add-section">
           <div
             class="dropzone"
@@ -178,13 +194,44 @@
             onclick="document.getElementById('fileUpload').click()"
           >
             <div class="dropzone-icon">📄</div>
-            <div class="dropzone-text">XHTML / JSON hier ablegen</div>
-            <div class="dropzone-sub">XHTML aus HISinOne oder JSON-Export</div>
+            <div class="dropzone-text">startFlow.xhtml / JSON ablegen</div>
+            <div class="dropzone-sub">Aus HISinOne (Netzwerk-Tab) oder JSON-Export</div>
+            <div
+              style="display: flex; gap: 6px; justify-content: center; margin-top: 8px"
+              onclick="event.stopPropagation()"
+            >
+              <button
+                type="button"
+                class="btn"
+                style="padding: 3px 8px; font-size: 11px"
+                onclick="pasteFromClipboard()"
+                title="Kopierten Inhalt aus Zwischenablage einfügen (Strg+V)"
+              >
+                📋 Einfügen
+              </button>
+              <button
+                type="button"
+                class="btn"
+                style="padding: 3px 8px; font-size: 11px"
+                onclick="openPasteModal()"
+                title="Quelltext-Eingabe öffnen"
+              >
+                📝 Textfeld
+              </button>
+            </div>
+            <button
+              type="button"
+              class="dropzone-guide-link"
+              onclick="event.stopPropagation(); openTutorialModal('hisinone')"
+              title="Anleitung zum Finden von startFlow.xhtml öffnen"
+            >
+              ❓ Wie finde ich startFlow.xhtml in F12?
+            </button>
           </div>
           <input
             type="file"
             id="fileUpload"
-            accept=".xhtml,.json"
+            accept=".xhtml,.html,.htm,.json"
             style="display: none"
             onchange="handleFileUpload(event)"
           />
@@ -370,6 +417,7 @@
             margin-bottom: 12px;
           "
         ></div>
+        <div id="importPlenaryNotice" style="display: none; margin-bottom: 12px" class="tutorial-callout"></div>
         <div class="form-group" style="margin-bottom: 4px">
           <label>Modul auswählen / erstellen</label>
           <select id="importModuleSelect" style="margin-bottom: 6px">
@@ -619,6 +667,270 @@
             </svg>
             Anwenden
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TUTORIAL MODAL -->
+    <div class="modal-overlay" id="modalTutorial">
+      <div class="modal" style="width: 680px; max-width: min(680px, 94vw)">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px">
+          <h2 style="margin: 0; display: flex; align-items: center; gap: 8px">
+            <span style="font-size: 20px">📖</span> Anleitung &amp; Hilfe
+          </h2>
+          <button class="btn" onclick="loadDemoData()" style="font-size: 11px; padding: 4px 8px" title="Beispielplan mit 3 Modulen laden">
+            ✨ Demo laden
+          </button>
+        </div>
+
+        <!-- Tab Switcher -->
+        <div class="tutorial-tabs">
+          <button class="tutorial-tab-btn active" id="tutTab-hisinone" onclick="switchTutorialTab('hisinone')">
+            📥 HISinOne-Export
+          </button>
+          <button class="tutorial-tab-btn" id="tutTab-selection" onclick="switchTutorialTab('selection')">
+            📚 VL &amp; HÜ Auswahl
+          </button>
+          <button class="tutorial-tab-btn" id="tutTab-optimizer" onclick="switchTutorialTab('optimizer')">
+            ⚡ Optimierer
+          </button>
+          <button class="tutorial-tab-btn" id="tutTab-share" onclick="switchTutorialTab('share')">
+            💾 Export &amp; Teilen
+          </button>
+          <button class="tutorial-tab-btn" id="tutTab-shortcuts" onclick="switchTutorialTab('shortcuts')">
+            ⌨️ Shortcuts
+          </button>
+        </div>
+
+        <!-- TAB: HISinOne Export -->
+        <div id="tutPanel-hisinone">
+          <div style="font-size: 13px; color: var(--text2); margin-bottom: 14px; line-height: 1.5">
+            So exportierst du die <code style="color:var(--accent)">startFlow.xhtml</code> mit den Terminen aus HISinOne über die Entwicklertools (<kbd class="kbd-key">F12</kbd>):
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">1</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Entwicklertools &amp; Netzwerk-Tab öffnen</div>
+              <div class="tutorial-step-desc">
+                Öffne dein Campus-Portal (HISinOne) im Browser und drücke <kbd class="kbd-key">F12</kbd> (oder Rechtsklick &rarr; <i>Untersuchen</i> / <kbd class="kbd-key">Strg</kbd> + <kbd class="kbd-key">Umschalt</kbd> + <kbd class="kbd-key">I</kbd>). Wechsle dort auf den Reiter <b>„Netzwerk“</b> (Network / Netzwerkanalyse).
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">2</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Auf der Veranstaltungsseite auf „Termine“ klicken</div>
+              <div class="tutorial-step-desc">
+                Navigiere zur Informationsseite der Veranstaltung und klicke auf <b>„Termine“</b> (oder „Termine und Räume“ / „Parallelgruppen“), um die Gruppenansicht zu laden.
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">3</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Request nach „startFlow.xhtml“ finden</div>
+              <div class="tutorial-step-desc">
+                Im Netzwerk-Tab siehst du die Anfragen. Filtere nach <b><code>startFlow.xhtml</code></b>.<br>
+                <i>Wichtig:</i> Die Anfrage kann potenziell von einem <b>Service Worker</b> stammen. Falls mehrere Einträge zu <code>startFlow.xhtml</code> vorhanden sind: Klicke sie an und prüfe im Unterreiter <b>„Antwort“ (Response)</b>, welcher Eintrag den echten <b>HTML-/XHTML-Quelltext</b> enthält (z. B. <code>&lt;div id="parallelGroupSchedule..."&gt;</code> oder Termintabellen). Das ist die gesuchte Datei!
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">4</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">In den Stundenplaner übertragen (2 Wege)</div>
+              <div class="tutorial-step-desc">
+                • <b>⚡ Am schnellsten (Kopieren &amp; Einfügen):</b> Rechtsklick auf den Request &rarr; <b>„Antwort kopieren“</b> (Copy response). Hier im Stundenplaner einfach <kbd class="kbd-key">Strg</kbd> + <kbd class="kbd-key">V</kbd> drücken oder auf <i>„📋 Einfügen“</i> klicken!<br>
+                • <b>📂 Als Datei:</b> Rechtsklick auf den Request &rarr; <b>„Antwort speichern unter...“</b>, als <code>.xhtml</code> speichern und hier per Drag &amp; Drop ablegen.
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-callout">
+            💡 <b>Automatische Vorlesungsauswahl:</b> Vorlesungen (VL) und Hörsaalübungen (HÜ) werden vom System automatisch erkannt und direkt als feste Pflichttermine im Stundenplan ausgewählt.
+          </div>
+        </div>
+
+        <!-- TAB: VL & HÜ Auswahl -->
+        <div id="tutPanel-selection" style="display: none">
+          <div style="font-size: 13px; color: var(--text2); margin-bottom: 14px; line-height: 1.5">
+            Wie funktioniert die Auswahl von Vorlesungen und Übungsgruppen?
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num" style="background: #60a5fa">VL</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Vorlesungen (VL) &amp; Hörsaalübungen (HÜ)</div>
+              <div class="tutorial-step-desc">
+                Da Vorlesungen und Hörsaalübungen für alle Studierenden zentral stattfinden, werden sie <b>immer automatisch ausgewählt</b>. Du musst sie nicht erst mühsam einzeln suchen und anklicken.
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num" style="background: #34d399">GÜ</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Parallelgruppen (GÜ, Tutorien, Praktika)</div>
+              <div class="tutorial-step-desc">
+                Bei Übungen gibt es meist parallele Kleingruppen. Klicke einfach auf die Gruppe, die am besten in deinen Wochenablauf passt – entweder links in der Modulleiste oder direkt im Kalender.
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num" style="background: #f87171">⚠</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Automatische Konflikterkennung</div>
+              <div class="tutorial-step-desc">
+                Sollte eine Gruppe zeitlich mit einer Vorlesung oder einer anderen gewählten Übung kollidieren, wird sie rot markiert und oben erscheint ein Konflikt-Banner.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: Optimizer -->
+        <div id="tutPanel-optimizer" style="display: none">
+          <div style="font-size: 13px; color: var(--text2); margin-bottom: 14px; line-height: 1.5">
+            Keine Lust, Dutzende Gruppenkombinationen manuell abzugleichen?
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">⚡</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Automatische Stundenplan-Optimierung</div>
+              <div class="tutorial-step-desc">
+                Klicke in der Symbolleiste auf <b>„Optimieren“</b> (oder drücke <kbd class="kbd-key">Strg</kbd> + <kbd class="kbd-key">O</kbd>). Der Algorithmus berechnet alle konfliktfreien Kombinationen für deine Module.
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">🎯</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Prioritäten per Drag &amp; Drop sortieren</div>
+              <div class="tutorial-step-desc">
+                Schiebe deine Wunschkriterien an die Spitze:<br>
+                • <b>Meiste freie Tage</b>: Hält ganze Tage (z. B. Fr/Mo) komplett frei.<br>
+                • <b>Geringste Leerzeit</b>: Minimiert Hohlstunden zwischen Veranstaltungen.<br>
+                • <b>Späterer Beginn</b>: Bevorzugt Vorlesungsstarts ab 10:00 Uhr.<br>
+                • <b>Früheres Ende</b>: Verhindert späte Abendveranstaltungen.
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">✓</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Top 3 Ergebnisse vergleichen &amp; anwenden</div>
+              <div class="tutorial-step-desc">
+                Blättere durch die 3 besten Stundenpläne und übernimm deinen Favoriten mit einem Klick auf <b>„Anwenden“</b>.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: Share -->
+        <div id="tutPanel-share" style="display: none">
+          <div style="font-size: 13px; color: var(--text2); margin-bottom: 14px; line-height: 1.5">
+            Speichern, sichern und mit Kommilitonen austauschen:
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">🔄</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Lokale Speicherung</div>
+              <div class="tutorial-step-desc">
+                Alle Eingaben werden automatisch in deinem Browser gespeichert. Du kannst das Fenster jederzeit schließen und später weiterplanen.
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">📤</div>
+            <div class="tutorial-step-content">
+              <div class="tutorial-step-title">Exportieren &amp; Teilen</div>
+              <div class="tutorial-step-desc">
+                Über <b>„Exportieren“</b> erhältst du eine JSON-Datei oder einen kopierbaren Text. Sende ihn deinen Freunden, damit ihr eure Stundenpläne aufeinander abstimmen könnt.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: Shortcuts -->
+        <div id="tutPanel-shortcuts" style="display: none">
+          <div style="font-size: 13px; color: var(--text2); margin-bottom: 14px; line-height: 1.5">
+            Praktische Tastaturkürzel für schnelle Navigation:
+          </div>
+
+          <div class="tutorial-step-card">
+            <div class="tutorial-step-num">⌨</div>
+            <div class="tutorial-step-content">
+              <div style="display: grid; grid-template-columns: 140px 1fr; gap: 8px; font-size: 12px; align-items: center">
+                <div><kbd class="kbd-key">Strg</kbd> + <kbd class="kbd-key">V</kbd></div>
+                <div>Kopierten XHTML-Quelltext oder JSON direkt einfügen</div>
+                <div><kbd class="kbd-key">?</kbd> oder <kbd class="kbd-key">H</kbd></div>
+                <div>Diese Anleitung / Hilfe öffnen</div>
+                <div><kbd class="kbd-key">Strg</kbd> + <kbd class="kbd-key">O</kbd></div>
+                <div>Stundenplan-Optimierer öffnen</div>
+                <div><kbd class="kbd-key">Esc</kbd></div>
+                <div>Aktives Dialogfenster schließen</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 16px">
+          <button class="btn" onclick="closeModal('modalTutorial')">Schließen</button>
+          <button class="btn primary" onclick="loadDemoData()">
+            ✨ Demo-Stundenplan laden
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PASTE MODAL -->
+    <div class="modal-overlay" id="modalPaste">
+      <div class="modal" style="width: 560px">
+        <h2>XHTML / HTML Quelltext einfügen</h2>
+        <div style="font-size: 12px; color: var(--text2); margin-bottom: 8px">
+          Füge hier den Quelltext aus dem Netzwerk-Tab (Antwort von <code style="color:var(--accent)">startFlow.xhtml</code>) oder einen JSON-Export ein:
+        </div>
+        <textarea
+          id="pasteInput"
+          placeholder="HTML / XHTML Quelltext hier mit Strg+V einfügen..."
+          style="
+            width: 100%;
+            height: 220px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 11px;
+            padding: 10px;
+            resize: vertical;
+            outline: none;
+            line-height: 1.5;
+          "
+        ></textarea>
+        <div class="modal-actions" style="margin-top: 12px">
+          <button class="btn" onclick="closeModal('modalPaste')">Abbrechen</button>
+          <button class="btn primary" onclick="confirmPasteImport()">Importieren</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- GLOBAL DROP OVERLAY -->
+    <div id="globalDropOverlay" class="global-drop-overlay">
+      <div class="global-drop-box">
+        <div style="font-size: 40px; margin-bottom: 12px">📂</div>
+        <div style="font-size: 18px; font-weight: 600">Datei hier ablegen</div>
+        <div style="font-size: 13px; color: var(--text2); margin-top: 6px">
+          XHTML / HTML aus HISinOne oder JSON-Export
         </div>
       </div>
     </div>
